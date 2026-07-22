@@ -1,5 +1,4 @@
 <?php
-session_start();
 
 const REQUIRED_PHP_VERSION = '8.2.0';
 const REQUIRED_EXTENSIONS  = ['pdo', 'mbstring', 'tokenizer', 'xml', 'ctype', 'json', 'PCRE', 'Session'];
@@ -45,11 +44,14 @@ function formatBytes($bytes, $decimals = 2)
     return sprintf("%.{$decimals}f", $bytes / pow(1024, $factor)) . ' ' . $size[$factor];
 }
 
-function githubApiRequest($url, $token)
+function githubApiRequest($url)
 {
+    if (!ini_get('allow_url_fopen')) {
+        return [null, "allow_url_fopen is disabled in php.ini; enable it or ask your host to."];
+    }
+
     $headers = [
         "User-Agent: install-script",
-        "Authorization: token $token",
         "Accept: application/vnd.github.v3+json",
     ];
     $opts = [
@@ -61,20 +63,19 @@ function githubApiRequest($url, $token)
     ];
     $context  = stream_context_create($opts);
     $response = @file_get_contents($url, false, $context);
-    return $response ?: false;
+
+    if ($response === false) {
+        $reason = error_get_last()['message'] ?? 'unknown error';
+        return [null, "Request to GitHub failed: $reason"];
+    }
+
+    return [$response, null];
 }
 
-function downloadReleaseAsset($assetId, $token, $targetFile)
+function downloadReleaseAsset($downloadUrl, $targetFile)
 {
-    $url = "https://api.github.com/repos/" . OWNER . "/" . REPO . "/releases/assets/" . $assetId;
-    $headers = [
-        "User-Agent: install-script",
-        "Authorization: token $token",
-        "Accept: application/octet-stream",
-    ];
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    $ch = curl_init($downloadUrl);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ["User-Agent: install-script"]);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
@@ -121,22 +122,44 @@ if ($currentStep == 1) {
 }
 
 if ($currentStep == 2) {
-    $token             = $_SESSION['github_token'] ?? '';
     $error             = '';
     $done              = false;
     $releases          = [];
     $selectedReleaseId = $_POST['release'] ?? null;
     $selectedAssetId   = $_POST['asset'] ?? null;
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        if (isset($_POST['github_token'])) {
-            $token                    = trim($_POST['github_token']);
-            $_SESSION['github_token'] = $token;
+    [$json, $requestFailure] = githubApiRequest(GITHUB_API);
+    if ($requestFailure) {
+        $error = $requestFailure;
+    } else {
+        $data = json_decode($json, true);
+        if (is_array($data) && array_is_list($data)) {
+            $releases = $data;
+        } elseif (is_array($data) && isset($data['message'])) {
+            $error = "GitHub API error: " . $data['message'];
+        } else {
+            $error = "Failed to parse GitHub releases (unexpected response: " . htmlspecialchars(substr((string) $json, 0, 200)) . ")";
+        }
+    }
+
+    if (!$error && $_SERVER['REQUEST_METHOD'] === 'POST' && $selectedAssetId && $selectedReleaseId) {
+        $downloadUrl = null;
+        foreach ($releases as $r) {
+            if ($r['id'] == $selectedReleaseId) {
+                foreach ($r['assets'] ?? [] as $a) {
+                    if ($a['id'] == $selectedAssetId) {
+                        $downloadUrl = $a['browser_download_url'];
+                        break 2;
+                    }
+                }
+            }
         }
 
-        if ($selectedAssetId && $token) {
+        if (!$downloadUrl) {
+            $error = "Could not resolve the selected asset's download URL.";
+        } else {
             $tmpZip = tempnam(sys_get_temp_dir(), 'gh_') . '.zip';
-            $result = downloadReleaseAsset($selectedAssetId, $token, $tmpZip);
+            $result = downloadReleaseAsset($downloadUrl, $tmpZip);
             if ($result === true) {
                 $zip = new ZipArchive();
                 if ($zip->open($tmpZip) === true) {
@@ -153,13 +176,6 @@ if ($currentStep == 2) {
         }
     }
 
-    if ($token) {
-        $json = githubApiRequest(GITHUB_API, $token);
-        $data = json_decode($json, true);
-        if (is_array($data)) $releases = $data;
-        else $error = "Failed to parse GitHub releases.";
-    }
-
     headerHtml("Step 2: Download from GitHub");
 
     if ($error) echo "<div class='alert alert-danger'>$error</div>";
@@ -169,14 +185,7 @@ if ($currentStep == 2) {
         footerHtml(); exit;
     }
 
-    if (!$token) {
-        echo "<form method='post' class='mb-3'>
-            <label for='github_token' class='form-label'>GitHub Token</label>
-            <input type='password' class='form-control' id='github_token' name='github_token' required>
-            <div class='form-text'>Needed to access the private repository</div>
-            <button class='btn btn-primary mt-3'>Submit Token</button>
-        </form>";
-    } elseif ($releases && !$selectedReleaseId) {
+    if (!$error && $releases && !$selectedReleaseId) {
         echo "<form method='post' class='mb-3'>
             <label for='release' class='form-label'>Select Release</label>
             <select name='release' id='release' class='form-select' required onchange='this.form.submit()'>
@@ -187,7 +196,7 @@ if ($currentStep == 2) {
         echo "</select>
             <noscript><button class='btn btn-primary mt-3'>Continue</button></noscript>
         </form>";
-    } elseif ($selectedReleaseId) {
+    } elseif (!$error && $selectedReleaseId) {
         $assets = [];
         foreach ($releases as $r) {
             if ($r['id'] == $selectedReleaseId) {
