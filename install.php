@@ -1,7 +1,7 @@
 <?php
 
 const REQUIRED_PHP_VERSION = '8.2.0';
-const REQUIRED_EXTENSIONS  = ['pdo', 'mbstring', 'tokenizer', 'xml', 'ctype', 'json', 'PCRE', 'Session'];
+const REQUIRED_EXTENSIONS  = ['pdo', 'mbstring', 'tokenizer', 'xml', 'ctype', 'json', 'PCRE', 'Session', 'zip', 'curl'];
 const OWNER                = 'SyncEngine';
 const REPO                 = 'SyncEngine';
 const GITHUB_API           = 'https://api.github.com/repos/' . OWNER . '/' . REPO . '/releases';
@@ -46,30 +46,46 @@ function formatBytes($bytes, $decimals = 2)
 
 function githubApiRequest($url)
 {
-    if (!ini_get('allow_url_fopen')) {
-        return [null, "allow_url_fopen is disabled in php.ini; enable it or ask your host to."];
-    }
-
     $headers = [
         "User-Agent: install-script",
         "Accept: application/vnd.github.v3+json",
     ];
-    $opts = [
-        'http' => [
-            'header'        => implode("\r\n", $headers) . "\r\n",
-            'timeout'       => 15,
-            'ignore_errors' => true,
-        ],
-    ];
-    $context  = stream_context_create($opts);
-    $response = @file_get_contents($url, false, $context);
 
-    if ($response === false) {
-        $reason = error_get_last()['message'] ?? 'unknown error';
-        return [null, "Request to GitHub failed: $reason"];
+    if (extension_loaded('curl')) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        $response = curl_exec($ch);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false) {
+            return [null, "Request to GitHub failed (curl): $curlError"];
+        }
+        return [$response, null];
     }
 
-    return [$response, null];
+    if (ini_get('allow_url_fopen')) {
+        $opts = [
+            'http' => [
+                'header'        => implode("\r\n", $headers) . "\r\n",
+                'timeout'       => 15,
+                'ignore_errors' => true,
+            ],
+        ];
+        $context  = stream_context_create($opts);
+        $response = @file_get_contents($url, false, $context);
+
+        if ($response === false) {
+            $reason = error_get_last()['message'] ?? 'unknown error';
+            return [null, "Request to GitHub failed: $reason"];
+        }
+        return [$response, null];
+    }
+
+    return [null, "Neither the curl extension nor allow_url_fopen is available on this server. Enable one of them (curl is recommended) to continue."];
 }
 
 function downloadReleaseAsset($downloadUrl, $targetFile)
