@@ -568,12 +568,30 @@ function renderRequirementsTable(array $result): void
 
     echo '<ul class="list-group mb-3">';
     echo '<li class="list-group-item"><strong>Web Server:</strong> ' . htmlspecialchars($result['info']['webServer'] ?? 'N/A') . '</li>';
-    echo '<li class="list-group-item"><strong>PHP Version:</strong> ' . PHP_VERSION;
+
+    // Determine PHP version color based on validation result
+    $phpClass = 'text-success';
+    foreach ($result['errors'] ?? [] as $err) {
+        if (stripos($err, 'PHP version') !== false) {
+            $phpClass = 'text-danger';
+            break;
+        }
+    }
+    if ($phpClass === 'text-success') {
+        foreach ($result['warnings'] ?? [] as $warn) {
+            if (stripos($warn, 'PHP version') !== false) {
+                $phpClass = 'text-warning';
+                break;
+            }
+        }
+    }
+
+    echo '<li class="list-group-item"><strong>PHP Version:</strong> <span class="' . $phpClass . '">' . PHP_VERSION . '</span>';
     if (isset($reqs['php']['version']['min'])) {
-        echo ' <span class="text-muted">(required: ' . htmlspecialchars($reqs['php']['version']['min']) . '</span>';
+        echo ' <span class="text-muted">(required: ' . htmlspecialchars($reqs['php']['version']['min']) . ')</span>';
     }
     if (isset($reqs['php']['version']['recommended'])) {
-        echo ', recommended: ' . htmlspecialchars($reqs['php']['version']['recommended']) . '</span>';
+        echo ', recommended: ' . htmlspecialchars($reqs['php']['version']['recommended']);
     }
     echo '</li>';
     echo '</ul>';
