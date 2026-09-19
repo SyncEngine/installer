@@ -1047,6 +1047,7 @@ if ($currentStep == 3) {
                 if ($result === null) {
                     unlink($tmpZip);
                     echo '<div class="alert alert-success">Extraction complete.</div>';
+                    echo '<script>setTimeout(function() { window.location.href = "?step=4"; }, 1500);</script>';
                     echo '<div class="mt-3"><a href="?step=4" class="btn btn-success">Continue</a></div>';
                 } else {
                     echo '<div class="alert alert-danger">Extraction failed: ' . htmlspecialchars($result) . '</div>';
@@ -1075,6 +1076,7 @@ if ($currentStep == 3) {
         if ($result === null) {
             unlink($tmpZip);
             echo '<div class="alert alert-success">Extraction complete.</div>';
+            echo '<script>setTimeout(function() { window.location.href = "?step=4"; }, 1500);</script>';
             echo '<div class="mt-3"><a href="?step=4" class="btn btn-success">Continue</a></div>';
         } else {
             echo '<div class="alert alert-danger">Extraction failed: ' . htmlspecialchars($result) . '</div>';
