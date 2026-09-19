@@ -567,6 +567,9 @@ function headerHtml($title)
         <span class="theme-icon-light" style="display:none;">🌙</span>
         <span class="theme-icon-dark" style="display:none;">☀️</span>
     </button>
+    <div class="text-center mb-4">
+        <img src="https://raw.githubusercontent.com/SyncEngine/SyncEngine/refs/heads/master/public/assets/icon-fill.svg" alt="SyncEngine" width="150" height="150">
+    </div>
     <div class="card"><div class="card-body"><h3 class="mb-4">' . htmlspecialchars($title) . '</h3>';
 }
 
