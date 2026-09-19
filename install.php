@@ -8,6 +8,17 @@ $currentStep = (int)($_GET['step'] ?? 1);
 $targetDir   = realpath(__DIR__ . '/../') . '/';
 $stateFile   = __DIR__ . '/install-state.json';
 
+// ─── Cleanup and redirect (must be before any step logic) ──────────────────────
+
+if (isset($_GET['cleanup']) && isset($_GET['goto'])) {
+    // Remove installer files
+    @unlink(__DIR__ . '/install.php');
+    @unlink(__DIR__ . '/install-state.json');
+    
+    header('Location: ' . $_GET['goto']);
+    exit;
+}
+
 $expectedDirName = 'public';
 if (basename(__DIR__) !== $expectedDirName) {
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Error</title></head><body>
@@ -1092,18 +1103,19 @@ if ($currentStep == 3) {
 
 if ($currentStep == 4) {
     headerHtml('Installation Complete');
-    echo '<p>SyncEngine has been extracted. Redirecting to the SyncEngine installer for database setup and final configuration...</p>';
+    echo '<p>SyncEngine has been extracted. Click the button below to start the database setup and final configuration.</p>';
     $basePath = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
     $installUrl = $basePath . '/index.php';
 
-    echo '<script>setTimeout(() => { window.location.href = "' . htmlspecialchars($installUrl) . '"; }, 1500);</script>';
-    echo '<a href="' . htmlspecialchars($installUrl) . '" class="btn btn-success mt-3">Go to SyncEngine Installer</a>';
+    echo '<div class="mt-3">';
+    echo '<a href="?cleanup=1&goto=' . urlencode($installUrl) . '" class="btn btn-success">Go to SyncEngine Installer</a>';
+    echo '</div>';
 
     footerHtml();
     exit;
 }
 
-// ─── Fallback: redirect to step 1 ────────────────────────────────────────────
+// ─── Fallback: redirect to step 1 ──────────────────────────────────────────────
 
 header('Location: ?step=1');
 exit;
