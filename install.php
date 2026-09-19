@@ -1030,16 +1030,16 @@ if ($currentStep == 3) {
     exit;
 }
 
-// ─── Step 4: Handoff to Symfony Installer ────────────────────────────────────
+// ─── Step 4: Handoff to SyncEngine Installer ────────────────────────────────────
 
 if ($currentStep == 4) {
     headerHtml('Installation Complete');
-    echo '<p>SyncEngine has been extracted. Redirecting to the Symfony installer for database setup and final configuration...</p>';
+    echo '<p>SyncEngine has been extracted. Redirecting to the SyncEngine installer for database setup and final configuration...</p>';
     $basePath = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
     $installUrl = $basePath . '/index.php';
 
     echo '<script>setTimeout(() => { window.location.href = "' . htmlspecialchars($installUrl) . '"; }, 1500);</script>';
-    echo '<a href="' . htmlspecialchars($installUrl) . '" class="btn btn-success mt-3">Go to Symfony Installer</a>';
+    echo '<a href="' . htmlspecialchars($installUrl) . '" class="btn btn-success mt-3">Go to SyncEngine Installer</a>';
 
     footerHtml();
     exit;
