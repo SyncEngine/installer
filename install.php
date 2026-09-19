@@ -133,7 +133,7 @@ class RequirementsValidator
             ],
             '_meta' => [
                 'source' => 'composer.json',
-                'url'    => 'https://github.com/' . OWNER . '/' . REPO . '/blob/master/composer.json',
+                'url'    => 'https://github.com/' . OWNER . '/' . REPO,
             ],
         ];
     }
