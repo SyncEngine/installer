@@ -1105,7 +1105,7 @@ if ($currentStep == 4) {
     headerHtml('Installation Complete');
     echo '<p>SyncEngine has been extracted. Click the button below to start the database setup and final configuration.</p>';
     $basePath = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
-    $installUrl = $basePath . '/index.php';
+    $installUrl = $basePath . '/';
 
     echo '<div class="mt-3">';
     echo '<a href="?cleanup=1&goto=' . urlencode($installUrl) . '" class="btn btn-success">Go to SyncEngine Installer</a>';
