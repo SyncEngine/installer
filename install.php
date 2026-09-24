@@ -187,52 +187,73 @@ class RequirementsValidator
 
         // INI settings
         $iniSettings = $requirements['php']['ini'] ?? [];
-        foreach ($iniSettings as $key => $requiredValue) {
+        foreach ($iniSettings as $key => $rawRequiredValue) {
             $currentValue = ini_get($key);
             if ($currentValue === false) {
                 $currentValue = 'Off';
             }
 
+            // Handle both old format (plain value) and new format (object with min/recommended)
+            $isObj = self::isRequirementObject($rawRequiredValue);
+            $minValue = self::getMinValue($rawRequiredValue);
+            $recValue = self::getRecommendedValue($rawRequiredValue);
+
             if ($key === 'memory_limit') {
-                $minMemory     = self::parseMemoryLimit((string)$requiredValue);
+                $minMemory     = self::parseMemoryLimit((string)$minValue);
                 $currentMemory = self::parseMemoryLimit((string)$currentValue);
-                if ($currentMemory > 0 && $currentMemory < $minMemory) {
+                if ($minMemory > 0 && $currentMemory > 0 && $currentMemory < $minMemory) {
                     $errors[] = 'PHP memory_limit (' . $currentValue . ') is below minimum required. Minimum: ' . self::formatBytes($minMemory);
-                } elseif ($currentMemory > 0 && $currentMemory < ($minMemory * 2)) {
-                    $warnings[] = 'PHP memory_limit (' . $currentValue . ') is low. Consider increasing to at least ' . self::formatBytes($minMemory * 2);
+                } elseif ($recValue !== null && $currentMemory > 0 && $currentMemory < (self::parseMemoryLimit((string)$recValue) * 2)) {
+                    $warnings[] = 'PHP memory_limit (' . $currentValue . ') is low. Consider increasing to at least ' . self::formatBytes(self::parseMemoryLimit((string)$recValue));
                 }
             } elseif ($key === 'max_execution_time') {
                 $currentExec = (int)$currentValue;
-                $requiredExec = (int)$requiredValue;
-                if ($currentExec > 0 && $currentExec < $requiredExec) {
+                $requiredExec = (int)$minValue;
+                if ($currentExec > 0 && $requiredExec > 0 && $currentExec < $requiredExec) {
                     $warnings[] = 'PHP max_execution_time (' . $currentExec . 's) is below recommended ' . $requiredExec . 's.';
                 }
-            } elseif (is_bool($requiredValue)) {
+            } elseif (is_bool($rawRequiredValue)) {
+                // Old format: boolean value directly
                 $currentBool = (bool)$currentValue;
-                if ($currentBool !== $requiredValue) {
-                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . ($requiredValue ? 'On' : 'Off') . '.';
+                if ($currentBool !== $rawRequiredValue) {
+                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . ($rawRequiredValue ? 'On' : 'Off') . '.';
+                }
+            } elseif (!$isObj) {
+                // Old format: plain string/number value
+                if ((string)$currentValue !== (string)$rawRequiredValue) {
+                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . $rawRequiredValue . '.';
                 }
             } else {
-                if ((string)$currentValue !== (string)$requiredValue) {
-                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . $requiredValue . '.';
+                // New format: object with min/recommended — show recommendation warning
+                if ($recValue !== null) {
+                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . $recValue . '.';
                 }
             }
         }
 
         // Disk space
-        $diskSpaceMb = $requirements['server']['disk_space_mb'] ?? null;
-        if ($diskSpaceMb !== null) {
-            $freeBytes = disk_free_space($projectDir);
-            if ($freeBytes !== false) {
-                $freeMB = (int)($freeBytes / 1024 / 1024);
-                $info['diskFreeMB'] = $freeMB;
-                if ($freeMB < $diskSpaceMb) {
-                    $errors[] = 'Insufficient disk space. Need at least ' . $diskSpaceMb . 'MB free, found ' . $freeMB . 'MB.';
-                } elseif ($freeMB < ($diskSpaceMb * 2)) {
-                    $warnings[] = 'Low disk space: ' . $freeMB . 'MB free. Recommended: at least ' . $diskSpaceMb . 'MB.';
-                }
+        $rawDiskSpace = $requirements['server']['disk_space_mb'] ?? null;
+        if ($rawDiskSpace !== null) {
+            $isObj = self::isRequirementObject($rawDiskSpace);
+            $minDisk = self::getMinValue($rawDiskSpace);
+            $recDisk = self::getRecommendedValue($rawDiskSpace);
+
+            if ($minDisk === null && $recDisk === null) {
+                // Neither min nor recommended set — skip validation
             } else {
-                $errors[] = 'Cannot determine available disk space.';
+                $freeBytes = disk_free_space($projectDir);
+                if ($freeBytes !== false) {
+                    $freeMB = (int)($freeBytes / 1024 / 1024);
+                    $info['diskFreeMB'] = $freeMB;
+
+                    if ($minDisk !== null && $freeMB < (int)$minDisk) {
+                        $errors[] = 'Insufficient disk space. Need at least ' . (int)$minDisk . 'MB free, found ' . $freeMB . 'MB.';
+                    } elseif ($recDisk !== null && $freeMB < (int)$recDisk) {
+                        $warnings[] = 'Low disk space: ' . $freeMB . 'MB free. Recommended: at least ' . (int)$recDisk . 'MB.';
+                    }
+                } else {
+                    $errors[] = 'Cannot determine available disk space.';
+                }
             }
         }
 
@@ -290,6 +311,36 @@ class RequirementsValidator
     public static function fetchFile(string $url): ?string
     {
         return fetchRemote($url);
+    }
+
+    /**
+     * Extract the minimum value from a requirement entry.
+     */
+    public static function getMinValue(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return $value['min'] ?? null;
+        }
+        return $value;
+    }
+
+    /**
+     * Extract the recommended value from a requirement entry.
+     */
+    public static function getRecommendedValue(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return $value['recommended'] ?? null;
+        }
+        return null;
+    }
+
+    /**
+     * Check if a requirement entry is in the new object format.
+     */
+    public static function isRequirementObject(mixed $value): bool
+    {
+        return is_array($value) && isset($value['min']);
     }
 }
 
@@ -707,21 +758,45 @@ function renderRequirementsTable(array $result): void
         echo '<div style="overflow-x: auto;">';
         echo '<table class="table table-striped table-sm mb-0" style="min-width: 300px; max-width: 100%;">';
         echo '<thead><tr><th class="text-start">Setting</th><th>Required</th><th>Current</th></tr></thead><tbody>';
-        foreach ($reqs['php']['ini'] as $key => $requiredValue) {
+        foreach ($reqs['php']['ini'] as $key => $rawValue) {
             $currentValue = ini_get($key);
             if ($currentValue === false) $currentValue = 'Off';
 
-            $match = true;
-            if (is_bool($requiredValue)) {
-                $match = (bool)$currentValue === $requiredValue;
-                $displayRequired = $requiredValue ? 'On' : 'Off';
+            $isObj = RequirementsValidator::isRequirementObject($rawValue);
+            $minVal = RequirementsValidator::getMinValue($rawValue);
+            $recVal = RequirementsValidator::getRecommendedValue($rawValue);
+
+            if ($isObj) {
+                // New format: show min and recommended
+                $displayRequired = 'min: ' . htmlspecialchars((string)$minVal);
+                if ($recVal !== null) {
+                    $displayRequired .= ', rec: ' . htmlspecialchars((string)$recVal);
+                }
+                // For new format, compare against min
+                $match = true;
+                if ($key === 'memory_limit' && $minVal !== null) {
+                    $minMemory = RequirementsValidator::parseMemoryLimit((string)$minVal);
+                    $currentMemory = RequirementsValidator::parseMemoryLimit((string)$currentValue);
+                    $match = ($currentMemory <= 0 || $currentMemory >= $minMemory);
+                } elseif ($key === 'max_execution_time' && $minVal !== null) {
+                    $currentExec = (int)$currentValue;
+                    $requiredExec = (int)$minVal;
+                    $match = ($currentExec <= 0 || $currentExec >= $requiredExec);
+                } elseif (!is_bool($rawValue)) {
+                    $match = (string)$currentValue === (string)$minVal;
+                }
             } else {
-                $match = (string)$currentValue === (string)$requiredValue;
-                $displayRequired = $requiredValue;
+                // Old format: plain value
+                $displayRequired = htmlspecialchars((string)$rawValue);
+                if (is_bool($rawValue)) {
+                    $match = (bool)$currentValue === $rawValue;
+                } else {
+                    $match = (string)$currentValue === (string)$rawValue;
+                }
             }
 
             echo '<tr><td class="text-start">' . htmlspecialchars($key) . '</td>';
-            echo '<td>' . htmlspecialchars($displayRequired) . '</td>';
+            echo '<td>' . $displayRequired . '</td>';
             echo '<td class="' . ($match ? 'text-success' : 'text-warning') . '">' . htmlspecialchars($currentValue) . '</td></tr>';
         }
         echo '</tbody></table>';
@@ -730,12 +805,21 @@ function renderRequirementsTable(array $result): void
     }
 
     // Disk space
-    if (isset($reqs['server']['disk_space_mb'])) {
+    $rawDiskSpace = $reqs['server']['disk_space_mb'] ?? null;
+    if ($rawDiskSpace !== null) {
+        $isObj = RequirementsValidator::isRequirementObject($rawDiskSpace);
+        $minDisk = $isObj ? (int)RequirementsValidator::getMinValue($rawDiskSpace) : (int)$rawDiskSpace;
+        $recDisk = $isObj ? RequirementsValidator::getRecommendedValue($rawDiskSpace) : null;
+
         $freeMB = $result['info']['diskFreeMB'] ?? 0;
         echo '<div class="card mb-3"><div class="card-header">Disk Space</div><div class="card-body">';
         echo '<table class="table table-sm mb-0" style="max-width: 100%;">';
-        echo '<tr><td>Free space:</td><td class="' . ($freeMB >= $reqs['server']['disk_space_mb'] ? 'text-success' : 'text-danger') . '">' . formatBytes($freeMB * 1024 * 1024) . '</td></tr>';
-        echo '<tr><td>Required:</td><td>' . $reqs['server']['disk_space_mb'] . ' MB</td></tr>';
+        echo '<tr><td>Free space:</td><td class="' . ($freeMB >= $minDisk ? 'text-success' : 'text-danger') . '">' . formatBytes($freeMB * 1024 * 1024) . '</td></tr>';
+        echo '<tr><td>Required:</td><td>' . $minDisk . ' MB';
+        if ($recDisk !== null) {
+            echo ', recommended: ' . (int)$recDisk . ' MB';
+        }
+        echo '</td></tr>';
         echo '</table></div></div>';
     }
 
