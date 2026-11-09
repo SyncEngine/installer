@@ -127,7 +127,7 @@ class RequirementsValidator
         return [
             'php' => [
                 'version' => [
-                    'min' => $minVersion,
+                    'minimum' => $minVersion,
                 ],
                 'extensions' => $extensions,
             ],
@@ -147,7 +147,7 @@ class RequirementsValidator
         // PHP version
         $phpReq = $requirements['php']['version'] ?? null;
         if ($phpReq) {
-            $minVersion = $phpReq['min'] ?? null;
+            $minVersion = $phpReq['minimum'] ?? null;
             $recVersion = $phpReq['recommended'] ?? null;
             if ($minVersion && version_compare(PHP_VERSION, $minVersion, '<')) {
                 $errors[] = 'PHP version ' . PHP_VERSION . ' is below minimum required ' . $minVersion . '.';
@@ -319,7 +319,7 @@ class RequirementsValidator
     public static function getMinValue(mixed $value): mixed
     {
         if (is_array($value)) {
-            return $value['min'] ?? null;
+            return $value['minimum'] ?? null;
         }
         return $value;
     }
@@ -340,7 +340,7 @@ class RequirementsValidator
      */
     public static function isRequirementObject(mixed $value): bool
     {
-        return is_array($value) && isset($value['min']);
+        return is_array($value) && isset($value['minimum']);
     }
 }
 
@@ -705,8 +705,8 @@ function renderRequirementsTable(array $result): void
     }
 
     echo '<li class="list-group-item"><strong>PHP Version:</strong> <span class="' . $phpClass . '">' . PHP_VERSION . '</span>';
-    if (isset($reqs['php']['version']['min'])) {
-        echo ' <span class="text-muted">(required: ' . htmlspecialchars($reqs['php']['version']['min']) . ')</span>';
+    if (isset($reqs['php']['version']['minimum'])) {
+        echo ' <span class="text-muted">(required: ' . htmlspecialchars($reqs['php']['version']['minimum']) . ')</span>';
     }
     if (isset($reqs['php']['version']['recommended'])) {
         echo ', recommended: ' . htmlspecialchars($reqs['php']['version']['recommended']);
