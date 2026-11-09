@@ -112,10 +112,7 @@ class RequirementsValidator
 
         // Dynamically extract extensions from composer.json
         $extensions = [];
-        $composerExtensions = array_merge(
-            $data['require'] ?? [],
-            $data['require-dev'] ?? []
-        );
+        $composerExtensions = $data['require'] ?? [];
 
         foreach ($composerExtensions as $package => $version) {
             if (strpos($package, 'ext-') === 0) {
@@ -149,11 +146,16 @@ class RequirementsValidator
         if ($phpReq) {
             $minVersion = $phpReq['minimum'] ?? null;
             $recVersion = $phpReq['recommended'] ?? null;
+            $maxVersion = $phpReq['maximum'] ?? null;
+
             if ($minVersion && version_compare(PHP_VERSION, $minVersion, '<')) {
                 $errors[] = 'PHP version ' . PHP_VERSION . ' is below minimum required ' . $minVersion . '.';
-            }
-            if ($recVersion && version_compare(PHP_VERSION, $recVersion, '<')) {
+            } elseif ($recVersion && version_compare(PHP_VERSION, $recVersion, '<')) {
                 $warnings[] = 'PHP version ' . PHP_VERSION . ' is below recommended ' . $recVersion . '. Consider upgrading.';
+            }
+
+            if ($maxVersion && version_compare(PHP_VERSION, $maxVersion, '>')) {
+                $warnings[] = 'PHP version ' . PHP_VERSION . ' is above maximum supported ' . $maxVersion . '. Compatibility may be affected.';
             }
         }
         $info['phpVersion'] = PHP_VERSION;
@@ -163,25 +165,29 @@ class RequirementsValidator
         foreach ($extensions as $ext) {
             $name = $ext['name'] ?? '';
             $required = $ext['required'] ?? true;
+            $recommended = $ext['recommended'] ?? false;
+            $alternatives = isset($ext['alternatives']) && is_array($ext['alternatives']) ? $ext['alternatives'] : [];
             $isLoaded = extension_loaded($name);
 
-            if (!$isLoaded && isset($ext['alternatives']) && is_array($ext['alternatives'])) {
-                $anyLoaded = false;
-                foreach ($ext['alternatives'] as $alt) {
+            if (!$isLoaded) {
+                foreach ($alternatives as $alt) {
                     if (extension_loaded($alt)) {
-                        $anyLoaded = true;
+                        $isLoaded = true;
                         break;
                     }
                 }
-                if (!$anyLoaded && $required) {
-                    $errors[] = 'Required extension group not satisfied: ' . $name . ' (need one of: ' . implode(', ', $ext['alternatives']) . ')';
-                } elseif (!$anyLoaded) {
-                    $warnings[] = 'Recommended extension group not satisfied: ' . $name . ' (need one of: ' . implode(', ', $ext['alternatives']) . ')';
-                }
-            } elseif (!$isLoaded && $required) {
-                $errors[] = 'Required PHP extension not loaded: ' . $name;
-            } elseif (!$isLoaded) {
-                $warnings[] = 'Recommended PHP extension not loaded: ' . $name;
+            }
+
+            if ($isLoaded) {
+                continue;
+            }
+
+            $requirement = $alternatives ? ' (need one of: ' . implode(', ', $alternatives) . ')' : '';
+
+            if ($required) {
+                $errors[] = 'Required PHP extension not loaded: ' . $name . $requirement;
+            } elseif ($recommended) {
+                $warnings[] = 'Recommended PHP extension not loaded: ' . $name . $requirement;
             }
         }
 
@@ -193,8 +199,8 @@ class RequirementsValidator
                 $currentValue = 'Off';
             }
 
-            // Handle both old format (plain value) and new format (object with min/recommended)
-            $isObj = self::isRequirementObject($rawRequiredValue);
+            // Handle both old format (plain value) and new format (object with minimum/recommended)
+            $isObj    = self::isRequirementObject($rawRequiredValue);
             $minValue = self::getMinValue($rawRequiredValue);
             $recValue = self::getRecommendedValue($rawRequiredValue);
 
@@ -203,18 +209,22 @@ class RequirementsValidator
                 $currentMemory = self::parseMemoryLimit((string)$currentValue);
                 if ($minMemory > 0 && $currentMemory > 0 && $currentMemory < $minMemory) {
                     $errors[] = 'PHP memory_limit (' . $currentValue . ') is below minimum required. Minimum: ' . self::formatBytes($minMemory);
-                } elseif ($recValue !== null && $currentMemory > 0 && $currentMemory < (self::parseMemoryLimit((string)$recValue) * 2)) {
+                } elseif ($recValue !== null && $currentMemory > 0 && $currentMemory < self::parseMemoryLimit((string)$recValue)) {
                     $warnings[] = 'PHP memory_limit (' . $currentValue . ') is low. Consider increasing to at least ' . self::formatBytes(self::parseMemoryLimit((string)$recValue));
                 }
             } elseif ($key === 'max_execution_time') {
                 $currentExec = (int)$currentValue;
-                $requiredExec = (int)$minValue;
-                if ($currentExec > 0 && $requiredExec > 0 && $currentExec < $requiredExec) {
-                    $warnings[] = 'PHP max_execution_time (' . $currentExec . 's) is below recommended ' . $requiredExec . 's.';
+                $minExec     = (int)$minValue;
+                $recExec     = $recValue !== null ? (int)$recValue : null;
+
+                if ($currentExec > 0 && $minExec > 0 && $currentExec < $minExec) {
+                    $errors[] = 'PHP max_execution_time (' . $currentExec . 's) is below minimum required ' . $minExec . 's.';
+                } elseif ($recExec && $currentExec > 0 && $currentExec < $recExec) {
+                    $warnings[] = 'PHP max_execution_time (' . $currentExec . 's) is below recommended ' . $recExec . 's.';
                 }
             } elseif (is_bool($rawRequiredValue)) {
                 // Old format: boolean value directly
-                $currentBool = (bool)$currentValue;
+                $currentBool = filter_var($currentValue, FILTER_VALIDATE_BOOLEAN);
                 if ($currentBool !== $rawRequiredValue) {
                     $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . ($rawRequiredValue ? 'On' : 'Off') . '.';
                 }
@@ -224,9 +234,14 @@ class RequirementsValidator
                     $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . $rawRequiredValue . '.';
                 }
             } else {
-                // New format: object with min/recommended — show recommendation warning
-                if ($recValue !== null) {
-                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', recommended ' . $recValue . '.';
+                // New format: object with minimum/recommended
+                if (is_bool($minValue)) {
+                    $currentBool = filter_var($currentValue, FILTER_VALIDATE_BOOLEAN);
+                    if ($currentBool !== $minValue) {
+                        $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', required ' . ($minValue ? 'On' : 'Off') . '.';
+                    }
+                } elseif (is_numeric($minValue) && (float)$currentValue < (float)$minValue) {
+                    $warnings[] = 'PHP ' . $key . ' is set to ' . $currentValue . ', minimum required ' . $minValue . '.';
                 }
             }
         }
@@ -254,6 +269,31 @@ class RequirementsValidator
                 } else {
                     $errors[] = 'Cannot determine available disk space.';
                 }
+            }
+        }
+
+        // Directories
+        $directories = $requirements['server']['directories'] ?? [];
+        foreach ($directories as $dir) {
+            $path = $dir['path'] ?? '';
+            if ($path === '') {
+                continue;
+            }
+
+            $fullPath = str_starts_with($path, '/')
+                ? $path
+                : rtrim($projectDir, '/\\') . DIRECTORY_SEPARATOR . $path;
+            $label = $dir['label'] ?? $path;
+
+            if (!is_dir($fullPath)) {
+                $parentDir = dirname($fullPath);
+                if (is_dir($parentDir) && is_writable($parentDir)) {
+                    $warnings[] = 'Directory does not exist but can be created: ' . $label;
+                } else {
+                    $errors[] = 'Directory does not exist and cannot be created: ' . $label;
+                }
+            } elseif (!is_writable($fullPath)) {
+                $errors[] = 'Directory is not writable: ' . $label;
             }
         }
 
@@ -711,6 +751,9 @@ function renderRequirementsTable(array $result): void
     if (isset($reqs['php']['version']['recommended'])) {
         echo ', recommended: ' . htmlspecialchars($reqs['php']['version']['recommended']);
     }
+    if (isset($reqs['php']['version']['maximum'])) {
+        echo ', maximum: ' . htmlspecialchars($reqs['php']['version']['maximum']);
+    }
     echo '</li>';
     echo '</ul>';
 
@@ -723,9 +766,10 @@ function renderRequirementsTable(array $result): void
         foreach ($reqs['php']['extensions'] as $ext) {
             $name = $ext['name'] ?? '';
             $required = $ext['required'] ?? true;
+            $recommended = $ext['recommended'] ?? false;
             $isLoaded = extension_loaded($name);
 
-            if (!$isLoaded && isset($ext['alternatives'])) {
+            if (!$isLoaded && isset($ext['alternatives']) && is_array($ext['alternatives'])) {
                 $anyLoaded = false;
                 foreach ($ext['alternatives'] as $alt) {
                     if (extension_loaded($alt)) { $anyLoaded = true; break; }
@@ -734,15 +778,19 @@ function renderRequirementsTable(array $result): void
                     $status = '<span class="text-success">Satisfied (alternative loaded)</span>';
                 } elseif ($required) {
                     $status = '<span class="text-danger">Not satisfied (need one of: ' . implode(', ', $ext['alternatives']) . ')</span>';
-                } else {
+                } elseif ($recommended) {
                     $status = '<span class="text-warning">Not satisfied (recommended)</span>';
+                } else {
+                    $status = '<span class="text-muted">Optional, not loaded</span>';
                 }
             } elseif ($isLoaded) {
                 $status = '<span class="text-success">Loaded</span>';
             } elseif ($required) {
                 $status = '<span class="text-danger">Required, not loaded</span>';
-            } else {
+            } elseif ($recommended) {
                 $status = '<span class="text-warning">Recommended, not loaded</span>';
+            } else {
+                $status = '<span class="text-muted">Optional, not loaded</span>';
             }
 
             echo '<tr><td class="text-start">' . htmlspecialchars(ucfirst(str_replace('_', ' ', $name))) . '</td><td>' . $status . '</td></tr>';
@@ -767,29 +815,34 @@ function renderRequirementsTable(array $result): void
             $recVal = RequirementsValidator::getRecommendedValue($rawValue);
 
             if ($isObj) {
-                // New format: show min and recommended
-                $displayRequired = 'min: ' . htmlspecialchars((string)$minVal);
+                // New format: show minimum and recommended
+                $minDisplay      = is_bool($minVal) ? ($minVal ? 'On' : 'Off') : (string)$minVal;
+                $recDisplay      = is_bool($recVal) ? ($recVal ? 'On' : 'Off') : (string)$recVal;
+                $displayRequired = 'min: ' . htmlspecialchars($minDisplay);
                 if ($recVal !== null) {
-                    $displayRequired .= ', rec: ' . htmlspecialchars((string)$recVal);
+                    $displayRequired .= ', rec: ' . htmlspecialchars($recDisplay);
                 }
-                // For new format, compare against min
+
+                // For new format, compare against minimum
                 $match = true;
                 if ($key === 'memory_limit' && $minVal !== null) {
-                    $minMemory = RequirementsValidator::parseMemoryLimit((string)$minVal);
+                    $minMemory     = RequirementsValidator::parseMemoryLimit((string)$minVal);
                     $currentMemory = RequirementsValidator::parseMemoryLimit((string)$currentValue);
-                    $match = ($currentMemory <= 0 || $currentMemory >= $minMemory);
+                    $match         = ($currentMemory <= 0 || $currentMemory >= $minMemory);
                 } elseif ($key === 'max_execution_time' && $minVal !== null) {
-                    $currentExec = (int)$currentValue;
+                    $currentExec  = (int)$currentValue;
                     $requiredExec = (int)$minVal;
-                    $match = ($currentExec <= 0 || $currentExec >= $requiredExec);
-                } elseif (!is_bool($rawValue)) {
-                    $match = (string)$currentValue === (string)$minVal;
+                    $match        = ($currentExec <= 0 || $currentExec >= $requiredExec);
+                } elseif (is_bool($minVal)) {
+                    $match = filter_var($currentValue, FILTER_VALIDATE_BOOLEAN) === $minVal;
+                } elseif (is_numeric($minVal)) {
+                    $match = (float)$currentValue >= (float)$minVal;
                 }
             } else {
                 // Old format: plain value
                 $displayRequired = htmlspecialchars((string)$rawValue);
                 if (is_bool($rawValue)) {
-                    $match = (bool)$currentValue === $rawValue;
+                    $match = filter_var($currentValue, FILTER_VALIDATE_BOOLEAN) === $rawValue;
                 } else {
                     $match = (string)$currentValue === (string)$rawValue;
                 }
